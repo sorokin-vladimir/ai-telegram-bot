@@ -9,3 +9,6 @@ services:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - XAI_API_KEY=${XAI_API_KEY}
       - WHITE_LIST=${WHITE_LIST}
+      - ADMIN_CHAT_ID=${ADMIN_CHAT_ID}
+      - LOG_LEVEL=${LOG_LEVEL}
+      - NODE_ENV=production
