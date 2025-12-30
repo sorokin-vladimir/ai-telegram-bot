@@ -1,170 +1,53 @@
-import TelegramBot from "node-telegram-bot-api";
-import OpenAI from "openai";
-import { Anthropic } from "@anthropic-ai/sdk";
-import { GoogleGenAI } from "@google/genai";
-import { xai } from "@ai-sdk/xai";
-import { generateText } from "ai";
-import dotenv from "dotenv";
+import { ADMIN_CHAT_ID } from "./config/env";
+import { stopBot, bot } from "./services/telegram/bot";
+import { messageHandler } from "./services/telegram/handlers/message.hander";
+import { logger, setTelegramNotifier } from "./utils/logger";
 
-dotenv.config();
-
-const token = process.env.TELEGRAM_BOT_TOKEN!;
-const bot = new TelegramBot(token, { polling: true });
-
-const defaultPrompt = `Answer concisely, but without sacrificing the meaning. The answer must be in the same language as the original question. Provide the response as plain text.`;
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  timeout: 60_000, // 1 minute
-  // @ts-expect-error
-  defaultQuery: defaultPrompt,
-});
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-  timeout: 60_000, // 1 minute
-  // @ts-expect-error
-  defaultQuery: defaultPrompt,
-});
-const genai = new GoogleGenAI({
-  apiKey: process.env.GOOGLE_GENAI_API_KEY,
-  // timeout: 60_000, // 1 minute
-  // defaultQuery: defaultPrompt,
-});
-
-// @ts-expect-error
-const whiteList = JSON.parse(process.env.WHITE_LIST);
-
-// === Запросы к моделям ===
-async function getClaudeResponse(question: string): Promise<string> {
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-5-20250929",
-    max_tokens: 1024,
-    messages: [{ role: "user", content: question }],
-  });
-  return response.content[0].type === "text" ? response.content[0].text : "";
-}
-
-async function getGeminiResponse(question: string): Promise<string> {
-  const result = await genai.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents: question,
-  });
-  return result.text ?? "";
-}
-
-async function getGrokResponse(question: string): Promise<string> {
-  const { text } = await generateText({
-    model: xai.responses("grok-4-1-fast-reasoning"),
-    system: defaultPrompt,
-    prompt: question,
-  });
-  return text;
-}
-
-async function getFinalValidation(prompt: string): Promise<string> {
-  const completion = await openai.chat.completions.create({
-    model: "gpt-5.1",
-    messages: [{ role: "user", content: prompt }],
-  });
-  return completion.choices[0].message.content || "";
-}
-
-// === Сборка промптов ===
-function buildValidationPrompt(
-  question: string,
-  claude: string,
-  gemini: string,
-  grok: string,
-): string {
-  return `
-You are an expert who synthesizes information from multiple responses to the same question in order to produce the most accurate, complete, and correct final answer.
-
-Original question: ${question}
-
-Here are several responses from different models:
-${claude.trim()}
-
-${gemini.trim()}
-
-${grok.trim()}
-
-Task:
-- Analyze all responses.
-- Identify the consensus, correct factual errors, and resolve contradictions.
-- Supplement with missing information from your knowledge only if it is critical for accuracy.
-- Create one coherent, concise, and complete answer.
-
-Critical output rules:
-- Respond ONLY as if answering the original question directly — provide the clean final answer.
-- Do NOT quote or reference the intermediate responses.
-- Do NOT describe the validation, checking, or comparison process.
-- Do NOT add phrases like "Based on analysis...", "Validation shows...", "Final answer:", etc.
-- Format the response in readable Markdown (use headings, lists, tables as appropriate).
-- Be concise if the question calls for brevity; provide full details if depth is needed.
-- The answer must be in the same language as the original question.
-- Format the response as correct Markdown (for Telegram).
-
-Just output the final answer to the question.
-`;
-}
-
-// === Основной обработчик ===
-bot.on("message", async (msg) => {
-  if (!msg.text || msg.text.startsWith("/")) return;
-
-  if (!whiteList?.includes(msg.chat.id)) {
-    return bot.sendMessage(msg.chat.id, "Не для тебя цветочек цвел!");
+// Set up Telegram notifier for critical errors
+setTelegramNotifier(async (text: string) => {
+  try {
+    await bot.sendMessage(ADMIN_CHAT_ID, text, { parse_mode: "Markdown" });
+  } catch (error) {
+    logger.error({ error }, "Failed to send Telegram notification");
   }
+});
 
-  const chatId = msg.chat.id;
-  const question = msg.text;
+// Register message handler
+bot.on("message", async (msg) => {
+  try {
+    await messageHandler(msg);
+  } catch (error) {
+    logger.error({ error, chatId: msg.chat.id }, "Unhandled error in message handler");
+  }
+});
 
-  const message = await bot.sendMessage(
-    chatId,
-    "🤖 Запрашиваю ответы у Claude, Gemini и Grok...",
-  );
+// Graceful shutdown handler
+async function gracefulShutdown(signal: string): Promise<void> {
+  logger.info(`Received ${signal}, starting graceful shutdown...`);
 
   try {
-    const [claudeText, geminiText, grokText] = await Promise.all([
-      getClaudeResponse(question),
-      getGeminiResponse(question),
-      getGrokResponse(question),
-    ]);
-
-    // bot.sendMessage(chatId, "✅ Claude: " + claudeText, {
-    //   parse_mode: "Markdown",
-    // });
-    // bot.sendMessage(chatId, "✅ Gemini: " + geminiText, {
-    //   parse_mode: "Markdown",
-    // });
-    // bot.sendMessage(chatId, "✅ Grok: " + grokText, { parse_mode: "Markdown" });
-
-    const validationPrompt = buildValidationPrompt(
-      question,
-      claudeText,
-      geminiText,
-      grokText,
-    );
-
-    bot.editMessageText(
-      "✅ Получил все ответы. Отправляю на валидацию в OpenAI...",
-      { chat_id: chatId, message_id: message.message_id },
-    );
-
-    const finalAnswer = await getFinalValidation(validationPrompt);
-
-    bot.editMessageText(finalAnswer || "Ошибка при финальной обработке", {
-      chat_id: chatId,
-      message_id: message.message_id,
-      parse_mode: "Markdown",
-    });
-  } catch (error: any) {
-    console.error(error);
-    bot.editMessageText(`Ошибка: ${error.message || error}`, {
-      chat_id: chatId,
-      message_id: message.message_id,
-    });
+    await stopBot();
+    logger.info("Graceful shutdown completed");
+    process.exit(0);
+  } catch (error) {
+    logger.error({ error }, "Error during graceful shutdown");
+    process.exit(1);
   }
+}
+
+// Register shutdown handlers
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+
+// Handle uncaught errors
+process.on("uncaughtException", (error) => {
+  logger.fatal({ error }, "Uncaught exception");
+  gracefulShutdown("uncaughtException");
 });
 
-console.log("Bot is running...");
+process.on("unhandledRejection", (reason, promise) => {
+  logger.fatal({ reason, promise }, "Unhandled rejection");
+  gracefulShutdown("unhandledRejection");
+});
+
+logger.info("Bot started successfully");
