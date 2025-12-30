@@ -15,4 +15,4 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY package*.json ./
 COPY .env ./
 
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/main.js"]

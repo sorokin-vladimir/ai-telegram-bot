@@ -16,11 +16,13 @@ const defaultPrompt = `Answer concisely, but without sacrificing the meaning. Th
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
   timeout: 60_000, // 1 minute
+  // @ts-expect-error
   defaultQuery: defaultPrompt,
 });
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
   timeout: 60_000, // 1 minute
+  // @ts-expect-error
   defaultQuery: defaultPrompt,
 });
 const genai = new GoogleGenAI({
@@ -29,6 +31,7 @@ const genai = new GoogleGenAI({
   // defaultQuery: defaultPrompt,
 });
 
+// @ts-expect-error
 const whiteList = JSON.parse(process.env.WHITE_LIST);
 
 // === Запросы к моделям ===
