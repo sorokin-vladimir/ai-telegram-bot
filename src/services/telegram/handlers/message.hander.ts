@@ -9,6 +9,7 @@ import { getGeminiResponse } from "../../ai/gemini.service";
 import { getGrokResponse } from "../../ai/grok.service";
 import { getFinalValidation } from "../../ai/validator.service";
 import { bot } from "../bot";
+import { convertMarkdownToHtml } from "../../../utils/telegram";
 
 export const messageHandler = async (msg: Message): Promise<Message | void> => {
   if (!msg.text || msg.text.startsWith("/")) return;
@@ -16,7 +17,10 @@ export const messageHandler = async (msg: Message): Promise<Message | void> => {
   const chatId = msg.chat.id;
 
   if (!WHITE_LIST?.includes(chatId)) {
-    logger.warn({ chatId, username: msg.from?.username }, "Unauthorized access attempt");
+    logger.warn(
+      { chatId, username: msg.from?.username },
+      "Unauthorized access attempt",
+    );
     throw new WhitelistError(chatId);
   }
 
@@ -60,11 +64,12 @@ export const messageHandler = async (msg: Message): Promise<Message | void> => {
 
     const finalAnswer = await getFinalValidation(validationPrompt);
 
-    await bot.editMessageText(finalAnswer || "Ошибка при финальной обработке", {
-      chat_id: chatId,
-      message_id: message.message_id,
-      parse_mode: "Markdown",
-    });
+    await bot.deleteMessage(chatId, message.message_id);
+    await bot.sendMessage(
+      chatId,
+      convertMarkdownToHtml(finalAnswer) || "Ошибка при финальной обработке",
+      { parse_mode: "HTML" },
+    );
 
     logger.info({ chatId }, "Successfully processed question");
   } catch (error) {
@@ -79,7 +84,10 @@ export const messageHandler = async (msg: Message): Promise<Message | void> => {
         },
       );
     } catch (editError) {
-      logger.error({ chatId, editError }, "Failed to send error message to user");
+      logger.error(
+        { chatId, editError },
+        "Failed to send error message to user",
+      );
     }
 
     throw error;
