@@ -9,7 +9,18 @@ import { getGeminiResponse } from "../../ai/gemini.service";
 import { getGrokResponse } from "../../ai/grok.service";
 import { getFinalValidation } from "../../ai/validator.service";
 import { bot } from "../bot";
-import { convertMarkdownToHtml } from "../../../utils/telegram";
+import { convertMarkdownToHtml, splitLongMessage } from "../../../utils/telegram";
+
+const sendLongMessage = async (
+  chatId: number,
+  text: string,
+  options?: any
+): Promise<void> => {
+  const chunks = splitLongMessage(text);
+  for (const chunk of chunks) {
+    await bot.sendMessage(chatId, chunk, options);
+  }
+};
 
 export const messageHandler = async (msg: Message): Promise<Message | void> => {
   if (!msg.text || msg.text.startsWith("/")) return;
@@ -48,6 +59,10 @@ export const messageHandler = async (msg: Message): Promise<Message | void> => {
       getGrokResponse(question),
     ]);
 
+    await sendLongMessage(chatId, `Claude: ${claudeText}`);
+    await sendLongMessage(chatId, `Gemini: ${geminiText}`);
+    await sendLongMessage(chatId, `Grok: ${grokText}`);
+
     logger.info({ chatId }, "Received all AI responses");
 
     const validationPrompt = buildValidationPrompt(
@@ -65,7 +80,7 @@ export const messageHandler = async (msg: Message): Promise<Message | void> => {
     const finalAnswer = await getFinalValidation(validationPrompt);
 
     await bot.deleteMessage(chatId, message.message_id);
-    await bot.sendMessage(
+    await sendLongMessage(
       chatId,
       convertMarkdownToHtml(finalAnswer) || "Ошибка при финальной обработке",
       { parse_mode: "HTML" },

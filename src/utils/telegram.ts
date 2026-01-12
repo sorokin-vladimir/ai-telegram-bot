@@ -53,3 +53,42 @@ export const convertMarkdownToHtml = (markdown: string): string => {
 
   return text;
 };
+
+const TELEGRAM_MAX_MESSAGE_LENGTH = 4096;
+
+export const splitLongMessage = (text: string, maxLength: number = TELEGRAM_MAX_MESSAGE_LENGTH): string[] => {
+  if (text.length <= maxLength) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  let remainingText = text;
+
+  while (remainingText.length > 0) {
+    if (remainingText.length <= maxLength) {
+      chunks.push(remainingText);
+      break;
+    }
+
+    // Try to find a good split point (newline, space, or punctuation)
+    let splitIndex = maxLength;
+
+    // Look for newline within the last 500 characters of the chunk
+    const searchStart = Math.max(0, maxLength - 500);
+    const lastNewline = remainingText.lastIndexOf('\n', maxLength);
+    if (lastNewline > searchStart) {
+      splitIndex = lastNewline + 1;
+    } else {
+      // Look for space within the last 200 characters
+      const lastSpace = remainingText.lastIndexOf(' ', maxLength);
+      if (lastSpace > maxLength - 200) {
+        splitIndex = lastSpace + 1;
+      }
+    }
+
+    chunks.push(remainingText.slice(0, splitIndex));
+    remainingText = remainingText.slice(splitIndex);
+  }
+
+  return chunks;
+};
